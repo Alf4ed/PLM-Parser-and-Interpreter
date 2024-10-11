@@ -1,0 +1,310 @@
+PARSER_BEGIN(Assignment)
+
+import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Stack;
+
+public class Assignment{
+	
+	public static void main(String args []) {
+		
+		Assignment parser = new Assignment(System.in);
+
+		try {
+			// Try to parse the program
+			parser.Program();
+			// Validate additional program requirements
+			PLPProgram.isPLPProgram();
+
+			System.out.println("PASS");
+
+			// Output a result if the program evaluates to an integer
+			PLPProgram.stackTrace.push("MAIN");
+			Integer result = PLPProgram.functions.get("MAIN").root.eval(0);
+
+			System.out.println(result);
+		}
+		// If the program contains a loop, output DIVERGENCE
+		catch (LoopException e) {
+			System.out.println(e.getMessage());
+		}
+		// Output the FAIL, a line number and an error message for thrown exceptions
+		catch (PLPException e) {
+			System.out.println("FAIL");
+			System.err.println(errLineNum);
+			System.err.println(e.getMessage());
+		}
+		// For all other exceptions, output the recieved character and the character that was expected
+		catch (ParseException e) {
+			System.out.println("FAIL");
+			System.err.println(errLineNum);
+			System.err.println("Expected " + tokenImage[e.expectedTokenSequences[0][0]] + " but recieved " + tokenImage[e.currentToken.next.kind]);
+		}
+	}
+
+	public static String currentParameter;
+	public static BinaryTree functionTree;
+	public static Integer errLineNum = 1;
+}
+
+class Node {
+	String type;
+	Integer value;
+	String function;
+
+	Node leftChild = null;
+	Node rightChild = null;
+
+	// Nodes can store values
+	public Node(Integer value) {
+		this.type = "value";
+		this.value = value;
+	}
+
+	// Nodes can store operators, functions or parameters
+	public Node(String string) {
+		if (string.equals("+")) {
+			this.type = "+";
+		}
+		else if (string.equals("*")) {
+			this.type = "*";
+		}
+		else if (string.toUpperCase().equals(string)) {
+			this.type = "function";
+			this.function = string;
+		}
+		else {
+			this.type = "parameter";
+		}
+	}
+
+	public int eval(Integer parameter) throws LoopException {
+		Integer value = 0;
+
+		switch (this.type) {
+			// If a node has a value, return the value
+			case "value":
+				value = this.value;
+				break;
+			// If a node is an operator node, return the result of evaluating its two children
+			case "+":
+				value = this.leftChild.eval(parameter) + this.rightChild.eval(parameter);
+				break;
+			case "*":
+				value = this.leftChild.eval(parameter) * this.rightChild.eval(parameter);
+				break;
+			// If a node is a function, return the result of evaluating the function call
+			case "function":
+				value = this.leftChild.eval(parameter);
+				// If a function call is made to a function already in the stack trace, this implies the program is in an infinite loop
+				if (PLPProgram.stackTrace.contains(this.function)) {
+					throw new LoopException("DIVERGENCE");
+				}
+				PLPProgram.stackTrace.push(this.function);
+				value = PLPProgram.functions.get(this.function).root.eval(value);
+				PLPProgram.stackTrace.pop();
+				break;
+			// If a node is a parameter, return the value associated with the parameter
+			case "parameter":
+				value = parameter;
+				break;
+		}
+
+		return value;
+	}
+}
+
+class BinaryTree {
+	public Node root;
+}
+
+class PLPProgram {
+	public static HashMap<String,BinaryTree> functions = new HashMap<>();
+	public static ArrayList<ArrayList<String>> functionCalls = new ArrayList<>();
+	public static Stack<String> stackTrace = new Stack<>();
+
+	public static void isPLPProgram() throws PLPException {
+		// Check that a MAIN function exists
+		if (!functions.containsKey("MAIN")) {
+			Assignment.errLineNum = 0;
+			throw new PLPException("Missing MAIN function");
+		}
+		// Check that all function calls refer to existing functions
+		for (int i = 0; i < functionCalls.size(); i++) {
+			if (!functions.containsKey(functionCalls.get(i).get(0))) {
+				Assignment.errLineNum = Integer.parseInt(functionCalls.get(i).get(1));
+				throw new PLPException("Function " + functionCalls.get(i).get(0) + " is not defined");
+			}
+		}
+	}
+}
+
+class PLPException extends ParseException { 
+    public PLPException(String errorMessage) {
+        super(errorMessage);
+    }
+}
+class LoopException extends ParseException { 
+    public LoopException(String errorMessage) {
+        super(errorMessage);
+    }
+}
+
+PARSER_END(Assignment)
+
+// If no predefined tokens match, match all characters on the ERROR token
+TOKEN: {
+	<KEYWORD: "DEF"> | <MAIN: "MAIN"> | <FUNCTION: (["A"-"Z"])+> |
+	<PARAMETER: (["a"-"z"])+> | <L_BRACE: "{"> | <L_BRACKET: "("> |
+	<R_BRACKET: ")"> | <R_BRACE: "}"> | <SEMICOLON: ";"> |
+	<SPACE: " "> | <EOL: "\n"> | <NUMBER: (["1"-"9"] (["0"-"9"])* | "0")> |
+	<PLUS: "+"> | <TIMES: "*"> | <ERROR: (~[])>
+}
+
+void Program() throws ParseException :
+{}
+{
+	// All programs must contain >= 1 line
+	(Line() {Assignment.errLineNum++;})+
+	<EOF>
+}
+
+void Line() throws ParseException :
+{
+	Token t;
+	Token functionName;
+}
+{
+	// Each line must contain the following tokens
+	(<KEYWORD> | {throw new PLPException("Missing keyword DEF");})
+	(<SPACE> | {throw new PLPException("Keyword DEF and function name must be seperated by a space");})
+	(
+		(functionName = <MAIN> {currentParameter = "";}) | 
+		(
+			(functionName = <FUNCTION> | {throw new PLPException("Expected an upper case function name");})
+			(<SPACE> | {throw new PLPException("Functions and parameters must be seperated by a SPACE");})
+			(t = <PARAMETER> | {throw new PLPException("Expected a lower case parameter name");})
+			{currentParameter = t.image;}
+		)
+	)
+
+	{
+		// Check that function has not already been defined
+		if(PLPProgram.functions.containsKey(functionName.image)) {
+			errLineNum = functionName.beginLine;
+			throw new PLPException("Function " + functionName.image + " is already defined");
+		}
+		functionTree = new BinaryTree();
+		PLPProgram.functions.put(functionName.image, functionTree);
+	}
+
+	(<SPACE> | {throw new PLPException("Parameters and function body must be seperated by a SPACE");})
+	(<L_BRACE> | {throw new PLPException("Function body must begin with a LEFT BRACE");})
+	(<SPACE> | {throw new PLPException("Function body must be seperated from the enclosing braces by a SPACE");})
+	// Create a parse tree for each function
+	functionTree.root = FunctionBody()
+	(<SPACE> | {throw new PLPException("Function body must be seperated from the enclosing braces by a SPACE");})
+	(<R_BRACE> | {throw new PLPException("Function body must end with a RIGHT BRACE");})
+	(<SPACE> | {throw new PLPException("Function body and semicolong must be seperated by a SPACE");})
+	(<SEMICOLON> | {throw new PLPException("Line must end with a semicolon");})
+	<EOL>
+}
+
+Node FunctionBody() throws PLPException :
+{
+	Node root;
+	Node rightChild;
+}
+{
+	// Ensure that MULTIPLICATIONs are performed before ADDITIONs
+	root = Bidmas()
+	(
+		<PLUS>
+		rightChild = Bidmas()
+		{
+			// Add operator and values to parse tree
+			Node newRoot = new Node("+");
+			newRoot.leftChild = root;
+			newRoot.rightChild = rightChild;
+			root = newRoot;
+		}
+	)*
+
+	{return root;}
+}
+
+Node Bidmas() throws PLPException :
+{
+	Node root;
+	Node rightChild;
+}
+{
+	root = FunctionArgument()
+	(
+		<TIMES>
+		rightChild = FunctionArgument()
+		{
+			// Add operator and values to parse tree
+			Node newRoot = new Node("*");
+			newRoot.leftChild = root;
+			newRoot.rightChild = rightChild;
+			root = newRoot;
+		}
+	)*
+	
+	{return root;}
+}
+
+Node FunctionArgument() throws PLPException :
+{
+	Token t;
+	Node root;
+}
+{
+	(
+		(
+			// Function arguments must be parameters, numbers or function calls
+			t = <PARAMETER>
+			{
+				// Check that functions only reference the named parameter
+				if (!t.image.equals(currentParameter)) {
+					errLineNum = t.beginLine;
+					throw new PLPException("Parameter names " + currentParameter + " and " + t.image + " do not match");
+				}
+				root = new Node(t.image);
+			}
+		) |
+		(
+			t = <NUMBER>
+			{
+				root = new Node(Integer.parseInt(t.image));
+			}
+		) |
+		root = FunctionCall() |
+		{throw new PLPException("Expected a parameter, non-negative integer or a function call");}
+	)
+
+	{return root;}
+}
+
+Node FunctionCall() throws PLPException :
+{
+	Token t;
+	Node root;
+}
+{
+	t = <FUNCTION>
+	{
+		// Add each function call and line number to an ArrayList to ensure that function calls reference existing functions
+		ArrayList<String> functionCall = new ArrayList<>();
+		functionCall.add(t.image);
+		functionCall.add(String.valueOf(t.beginLine));
+		PLPProgram.functionCalls.add(functionCall);
+		root = new Node(t.image);
+	}
+	<L_BRACKET>
+	root.leftChild = FunctionBody()
+	<R_BRACKET>
+
+	{return root;}
+}
